@@ -36,7 +36,7 @@
 #define SAMPLE_RATE 1000
 #define VREF 3.3
 
-#define UART_BUFFER_SIZE 4
+#define UART_BUFFER_SIZE 5
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,9 +52,12 @@ TIM_HandleTypeDef htim1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-float frequency = 10.0;
+float frequency = 30.0;
 float amplitude_volts = 0.5;
 float phase = 0.0;
+
+volatile uint32_t dac_value;
+volatile float dac_output_voltage;
 
 uint8_t rx_buffer[UART_BUFFER_SIZE];
 /* USER CODE END PV */
@@ -109,6 +112,7 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_UART_Receive_IT(&huart2, rx_buffer, UART_BUFFER_SIZE);
+  HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
 
   /* USER CODE END 2 */
 
@@ -140,12 +144,11 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 10;
   RCC_OscInitStruct.PLL.PLLN = 150;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 2;
@@ -251,7 +254,9 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM1_Init 2 */
-
+	HAL_NVIC_SetPriority(TIM1_UP_TIM10_IRQn, 0, 0);
+	HAL_NVIC_EnableIRQ(TIM1_UP_TIM10_IRQn);
+	HAL_TIM_Base_Start_IT(&htim1);
   /* USER CODE END TIM1_Init 2 */
 
 }
@@ -300,6 +305,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -307,6 +313,10 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+uint32_t calculate_dac_value(float sine_voltage) {
+    return (uint32_t)((sine_voltage / VREF) * 4095);
+}
+
 void update_sine_wave(void) {
     float delta_theta = 2.0f * M_PI * frequency / SAMPLE_RATE;
     phase += delta_theta;
@@ -314,31 +324,34 @@ void update_sine_wave(void) {
         phase -= 2.0f * M_PI;
     }
 
-    float dac_output_voltage = amplitude_volts  + amplitude_volts * sin(phase);
+    dac_output_voltage = VREF / 2 + amplitude_volts * sin(phase);
 
-    uint32_t dac_value = calculate_dac_value(dac_output_voltage);
+    dac_value = calculate_dac_value(dac_output_voltage);
     HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_value);
 }
 
 void Process_Command(uint8_t *cmd) {
-	char command_type;
-	float value;
-	if (sscanf((char*)cmd, "%c%f", &command_type, &value) == 2) {
-		switch (command_type) {
-			case 'A':
-				if (value >= VREF && value <= VREF){
-					amplitude_volts = value / 2;
-				}
-				break;
-			case 'F':
-				if (value >= 5 && value <= 35){
-					frequency = value;
-				}
-				break;
-			default:
-				break;
-		}
-	}
+    char command_type = cmd[0];
+    float value = 0.0;
+
+    if (cmd[2] == '.' && command_type == 'A') {
+        int integer_part = (cmd[1] - '0');
+        int decimal_part = ((cmd[3] - '0') * 10) + (cmd[4] - '0');
+        value = integer_part + (decimal_part / 100.0);
+
+        if (value >= VREF && value <= VREF) {
+            amplitude_volts = value / 2;
+        }
+    }
+    else if (cmd[3] == '.' && command_type == 'F') {
+        int integer_part = ((cmd[1] - '0') * 10) + (cmd[2] - '0');
+        int decimal_part = (cmd[4] - '0');
+        value = integer_part + (decimal_part / 10.0);
+
+        if (value >= 5 && value <= 35) {
+            frequency = value;
+        }
+    }
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
