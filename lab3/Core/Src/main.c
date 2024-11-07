@@ -53,7 +53,7 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 float frequency = 30.0;
-float amplitude_volts = 0.5;
+float amplitude_volts = 1.5;
 float phase = 0.0;
 
 volatile uint32_t dac_value;
@@ -339,7 +339,7 @@ void Process_Command(uint8_t *cmd) {
         int decimal_part = ((cmd[3] - '0') * 10) + (cmd[4] - '0');
         value = integer_part + (decimal_part / 100.0);
 
-        if (value >= VREF && value <= VREF) {
+        if (value >= 1 && value <= VREF) {
             amplitude_volts = value / 2;
         }
     }
